@@ -181,6 +181,15 @@ h1,h2,h3,h4{font-family:var(--serif);font-weight:500;letter-spacing:0.01em;}
 }
 .piece-card:hover{transform:translateY(-4px);border-color:var(--line-strong);}
 .piece-swatch{width:100%;height:74px;border-radius:2px;margin-bottom:16px;}
+.piece-photo{width:100%;height:74px;border-radius:2px;margin-bottom:16px;object-fit:cover;display:block;}
+.image-upload{
+  position:relative;border:1px dashed var(--line-strong);border-radius:2px;padding:18px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  min-height:110px;cursor:pointer;transition:border-color .3s var(--ease);overflow:hidden;
+}
+.image-upload:hover{border-color:var(--champagne-dim);}
+.image-upload img{max-height:140px;max-width:100%;border-radius:2px;object-fit:cover;}
+.image-upload span{font-size:0.82rem;color:var(--silver-dim);text-align:center;}
 .piece-card h4{font-size:1rem;color:var(--white);font-weight:600;}
 .piece-card span{display:block;font-size:0.8rem;color:var(--silver-dim);margin-top:4px;}
 .piece-remove{position:absolute;top:12px;right:12px;font-size:0.75rem;color:var(--silver-dim);opacity:0;transition:opacity .3s var(--ease);}
@@ -649,8 +658,8 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;}
       </div>
       <div class="plan-card featured">
         <span class="plan-tag">Mais popular</span>
-        <div class="plan-name">ModAI</div>
-        <div class="plan-price">R$9,90 <span>/mês</span></div>
+        <div class="plan-name">ModAI+</div>
+        <div class="plan-price">R$19,90 <span>/mês</span></div>
         <ul class="plan-list">
           <li>Acesso ilimitado ao chatbot</li>
           <li>Remoção de anúncios</li>
@@ -658,6 +667,16 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;}
           <li>Experiências exclusivas</li>
         </ul>
         <button class="btn btn-primary open-plan-modal">Assinar ModAI+</button>
+      </div>
+      <div class="plan-card">
+        <div class="plan-name">Chat Ilimitado</div>
+        <div class="plan-price">R$12,90 <span>/mês</span></div>
+        <ul class="plan-list">
+          <li>Chatbot ilimitado</li>
+          <li>Remoção de anúncios</li>
+          <li>Ideal para quem já usa bastante</li>
+        </ul>
+        <button class="btn btn-ghost open-plan-modal">Assinar</button>
       </div>
     </div>
   </div>
@@ -703,6 +722,14 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;}
     <h3 id="addPieceTitle">Adicionar peça</h3>
     <p>Cadastre uma peça do seu guarda-roupa.</p>
     <form id="addPieceForm">
+      <div class="form-group">
+        <label for="pieceImage">Foto da peça (opcional)</label>
+        <div class="image-upload" id="imageUploadZone">
+          <img id="imagePreview" alt="Pré-visualização da peça" hidden>
+          <span id="imageUploadLabel">Clique para escolher uma foto</span>
+        </div>
+        <input type="file" id="pieceImage" accept="image/*" style="display:none;">
+      </div>
       <div class="form-group">
         <label for="pieceName">Nome da peça</label>
         <input type="text" id="pieceName" required placeholder="Ex: Camiseta preta básica">
@@ -764,9 +791,14 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;}
 
 /* ==============================
    CONFIGURAÇÃO DA IA
+   Aqui NÃO fica nenhuma chave de API. O index.html chama o seu
+   proxy (Cloudflare Worker), e é o proxy que guarda a chave da
+   OpenAI (OPENAI_API_KEY) em segredo no servidor. Troque apenas
+   a URL abaixo pela URL do seu Worker depois de publicá-lo
+   (veja worker.js).
 ============================== */
-const API_URL = "https://modai-proxy.nicks5425s.workers.dev/";
-const MODEL = "gemini-3.5-flash-lite";
+const API_URL = "https://COLOQUE-AQUI-A-URL-DO-SEU-WORKER.workers.dev";
+const MODEL = "gpt-4o-mini"; // veja platform.openai.com/docs/models para outras opções
 
 /* ==============================
    SYSTEM PROMPT DA MODAI
@@ -939,10 +971,12 @@ function renderWardrobe() {
     filtered.forEach(item => {
       const card = document.createElement('div');
       card.className = 'piece-card';
-      const bg = colorToSwatch(item.color);
+      const visual = item.image
+        ? `<img class="piece-photo" src="${item.image}" alt="${item.name}">`
+        : `<div class="piece-swatch" style="background:${colorToSwatch(item.color)};"></div>`;
       card.innerHTML = `
         <button class="piece-remove" data-id="${item.id}" aria-label="Remover ${item.name}">Remover</button>
-        <div class="piece-swatch" style="background:${bg.startsWith('#') ? bg : bg};"></div>
+        ${visual}
         <h4>${item.name}</h4>
         <span>${item.category} · ${item.color}</span>`;
       wardrobeGrid.appendChild(card);
@@ -971,6 +1005,53 @@ wardrobeGrid.addEventListener('click', (e) => {
 
 addPieceBtnEl.addEventListener('click', () => openModal('addPieceOverlay'));
 
+/* ==============================
+   UPLOAD DE FOTO DA PEÇA
+============================== */
+const imageUploadZone = document.getElementById('imageUploadZone');
+const imageInput = document.getElementById('pieceImage');
+const imagePreview = document.getElementById('imagePreview');
+const imageUploadLabel = document.getElementById('imageUploadLabel');
+let pendingImageData = null; // base64 da foto escolhida, pronta para salvar
+
+imageUploadZone.addEventListener('click', () => imageInput.click());
+
+imageInput.addEventListener('change', () => {
+  const file = imageInput.files[0];
+  if (!file) return;
+
+  // Redimensiona a imagem no próprio navegador (canvas) antes de guardar,
+  // para a foto não ocupar espaço demais no LocalStorage.
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxSize = 500;
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      pendingImageData = canvas.toDataURL('image/jpeg', 0.8);
+
+      imagePreview.src = pendingImageData;
+      imagePreview.hidden = false;
+      imageUploadLabel.textContent = 'Clique para trocar a foto';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function resetImageUpload() {
+  pendingImageData = null;
+  imageInput.value = '';
+  imagePreview.hidden = true;
+  imagePreview.src = '';
+  imageUploadLabel.textContent = 'Clique para escolher uma foto';
+}
+
 document.getElementById('addPieceForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const item = {
@@ -979,13 +1060,19 @@ document.getElementById('addPieceForm').addEventListener('submit', (e) => {
     category: document.getElementById('pieceCategory').value,
     color: document.getElementById('pieceColor').value.trim(),
     style: document.getElementById('pieceStyle').value.trim(),
+    image: pendingImageData,
   };
   if (!item.name || !item.color) return;
   wardrobeItems.push(item);
   saveWardrobe(wardrobeItems);
   renderWardrobe();
   e.target.reset();
+  resetImageUpload();
   closeModal('addPieceOverlay');
+});
+
+document.querySelectorAll('[data-close="addPieceOverlay"]').forEach(btn => {
+  btn.addEventListener('click', resetImageUpload);
 });
 
 renderWardrobe();
